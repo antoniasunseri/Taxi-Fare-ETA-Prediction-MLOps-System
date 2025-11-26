@@ -9,6 +9,8 @@ import wandb
 import boto3
 from dotenv import load_dotenv
 
+
+
 # -----------------------------
 # Load environment variables
 # -----------------------------
@@ -21,6 +23,10 @@ WAND_MODEL_NAME = os.getenv("WAND_MODEL_NAME", "taxi_model")
 WAND_MODEL_ALIAS = os.getenv("WAND_MODEL_ALIAS", "production")
 DYNAMO_TABLE = os.getenv("DYNAMO_TABLE", "taxi-predictions")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN")
 
 # -----------------------------
 # Initialize FastAPI
