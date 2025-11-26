@@ -1,4 +1,3 @@
-# main.py
 import os
 import json
 from datetime import datetime
@@ -9,14 +8,7 @@ import wandb
 import boto3
 from dotenv import load_dotenv
 
-AWS_ACCESS_KEY_ID = ASIAZDNUGXE6RXEL5PGN
-AWS_SECRET_ACCESS_KEY = PBPdoAlG1x7SNcjWV8ri/dPZ1A9tK48EKOa6lbAV
-AWS_SESSION_TOKEN = IQoJb3JpZ2luX2VjELD//////////wEaCXVzLXdlc3QtMiJHMEUCIQC6FGAqRu0HXGrb3hVM3aJAaigwr04OwbxAfTXUrneKwQIgIbJN/TOY8LAEXub0spvmsUizjfqY0v5wFVHS6ancsloqoQIIeRAAGgw2MjU4MzI1NDA0NzciDFcFOkqCi9BUEoseySr+AYHH1uCH2bwoPgNCvsVRkOstmdCY5SUQbJ/Dm9h+bxAQbyohA2h8VNpmsXW8ii+/Tmxm/Irp3uBqRq9OhXIROwBz2zHCtL5scN3YIzBlKcBQTCwgQbcrvbEUQwkEZoF2UKxfIwcmVyRKjWQq1ktT46ss4Y9kiQQkFm+/fNmIe7lEGEO83VyvVO16OlLt7p2IqDPHjr0MXledOKddhSB3vsDl8xELv5HxhYhANOE8vbKrf3sCujvc4qH9GhQguhWYMBZjRrnF79HNUI6toygTS27vS537KlkaDrbRAZi4ay2o6WRotNgFy+hrbB5e1DpG1qw0WHdjCuYphS7pRhZlMKKMmckGOp0BuF8wg+lpyrsGjdfP9M3lZ+2B1ichg2hzaQE0f4Kp0NjYX/TcqEteOxjyxNz4V0HNHyk7UQvXUZ9Fo6xQIG6a2kYht7JuQsQxUP/Pg4hMW0YLzKqrE0vVSQbqsZY73H0cnGCbuY07LzQelywIU7M5KhppesxKtAIxCAk+rDWkEykOt6r4eEXWSEXHULBBls/eLpAviqONAg2GO0m70A==
-
-
-# -----------------------------
 # Load environment variables
-# -----------------------------
 load_dotenv()
 
 WANDB_API_KEY = os.getenv("WANDB_API_KEY")
@@ -31,14 +23,10 @@ AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN")
 
-# -----------------------------
 # Initialize FastAPI
-# -----------------------------
 app = FastAPI(title="Taxi Fare / ETA Prediction API")
 
-# -----------------------------
 # Pydantic schema
-# -----------------------------
 class PredictionRequest(BaseModel):
     pickup_lat: float
     pickup_lon: float
@@ -48,15 +36,19 @@ class PredictionRequest(BaseModel):
     trip_distance: float
     user_id: str = "anonymous"
 
-# -----------------------------
-# Global variables
-# -----------------------------
-MODEL = None
-dynamo = None
+MODEL = None  # global model variable
 
-# -----------------------------
+# Initialize DynamoDB
+def init_dynamodb():
+    return boto3.resource(
+        "dynamodb",
+        region_name=AWS_REGION,
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        aws_session_token=AWS_SESSION_TOKEN
+    )
+
 # Load model from Weights & Biases
-# -----------------------------
 def load_model_from_wandb():
     global MODEL
     wandb.login(key=WANDB_API_KEY)
@@ -67,15 +59,12 @@ def load_model_from_wandb():
     MODEL = joblib.load(f"{model_dir}/model.joblib")
     print(f"Model loaded from {model_dir}/model.joblib")
 
-# -----------------------------
-# Log prediction to DynamoDB
-# -----------------------------
+# Log prediction to DynamoDB + JSON
 def log_prediction(req: PredictionRequest, prediction: float):
-    global dynamo
-    if dynamo is None:
-        dynamo = boto3.resource("dynamodb", region_name=AWS_REGION)
+    dynamo = init_dynamodb()
     table = dynamo.Table(DYNAMO_TABLE)
     
+    # Log to DynamoDB
     item = {
         "request_id": f"{req.user_id}-{datetime.utcnow().timestamp()}",
         "timestamp": datetime.utcnow().isoformat(),
@@ -83,33 +72,51 @@ def log_prediction(req: PredictionRequest, prediction: float):
         "prediction": prediction,
         "model_alias": WAND_MODEL_ALIAS
     }
-    
     table.put_item(Item=item)
 
-# -----------------------------
-# Startup event
-# -----------------------------
+    # Log to local JSON 
+    log_file = "./logs/prediction_logs.json"
+    os.makedirs("./logs", exist_ok=True)
+    
+    try:
+        with open(log_file, "r") as f:
+            logs = json.load(f)
+    except FileNotFoundError:
+        logs = []
+    
+    logs.append({
+        "timestamp": datetime.utcnow().isoformat(),
+        "user_id": req.user_id,
+        "pickup_lat": req.pickup_lat,
+        "pickup_lon": req.pickup_lon,
+        "dropoff_lat": req.dropoff_lat,
+        "dropoff_lon": req.dropoff_lon,
+        "passenger_count": req.passenger_count,
+        "trip_distance": req.trip_distance,
+        "prediction": prediction,
+        "model_alias": WAND_MODEL_ALIAS
+    })
+    
+    with open(log_file, "w") as f:
+        json.dump(logs, f, indent=4)
+
+# Startup
 @app.on_event("startup")
 def startup_event():
     load_model_from_wandb()
     print("Model loaded and FastAPI ready")
 
-# -----------------------------
 # Health endpoint
-# -----------------------------
 @app.get("/health")
 def health():
     return {"status": "ok", "model_loaded": MODEL is not None}
 
-# -----------------------------
 # Predict endpoint
-# -----------------------------
 @app.post("/predict")
 def predict(req: PredictionRequest):
     if MODEL is None:
         raise HTTPException(status_code=503, detail="Model not available")
     
-    # Prepare features in same order as model training
     features = [
         req.pickup_lat,
         req.pickup_lon,
@@ -122,7 +129,7 @@ def predict(req: PredictionRequest):
     # Make prediction
     prediction = MODEL.predict([features])[0]
     
-    # Log prediction to DynamoDB
+    # Log prediction
     log_prediction(req, float(prediction))
     
     return {
